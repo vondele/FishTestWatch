@@ -1,0 +1,263 @@
+#!/usr/bin/python
+
+#############################################################################
+# Copyright (c) 2017 "Joost VandeVondele"
+#
+# "ftw" is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#############################################################################
+
+
+# statistics for fishtest test url e.g. http://tests.stockfishchess.org/tests/view/59f9673a0ebc590ccbb89ea0
+
+from sprt_elo import sprt
+import math
+import time
+import sys
+import re
+import urllib
+import json
+from matplotlib import pyplot as plt
+from bs4 import BeautifulSoup
+
+hashid = re.split("/",sys.argv[1])[-1]
+restartfileName = hashid+".ftw"
+
+try:
+  restartfile=open(restartfileName,"r")
+  [DataX, DataLOS, DataElo, DataEloLowError, DataEloHighError, DataLLR, DataWorkers, DataCores]=json.load(restartfile)
+  restartfile.close()
+except:
+  DataX = []
+  DataLOS = []
+  DataElo = []
+  DataEloLowError = []
+  DataEloHighError = []
+  DataLLR = []
+  DataWorkers = []
+  DataCores = []
+
+while True:
+
+   #
+   # fetch URL from argv and parse
+   #
+   f = urllib.urlopen(sys.argv[1])
+   soup = BeautifulSoup(f, 'html.parser')
+
+
+   # [<pre class="elo-results" style="background-color:;">LLR: 2.64 (-2.94,2.94) [-3.00,1.00]\nTotal: 15271 W: 1940 L: 1828 D: 11503</pre>]
+   line = str(soup.find_all(class_="elo-results")[0])
+   line = re.split(">",line)[1]
+   line = re.split("<",line)[0]
+   line = filter(None,re.split("[a-zA-Z: ()\[\],\n]+",line))
+   
+   if len(line)<9:
+      print "No Data yet!"
+      time.sleep(10)
+      continue
+
+   #
+   # get relevant data from the line
+   # 
+   BayesElo=0
+   LogisticElo=1
+   alpha = 0.05
+   beta = 0.05
+   level = 0.95
+   llr  = float(line[0])
+   elo0 = float(line[3])
+   elo1 = float(line[4])
+   games_total = int(line[5])
+   W  = int(line[6])
+   L  = int(line[7])
+   D  = int(line[8])
+  
+   #
+   # find the new_tag info, giving a useful title
+   #
+   data = []
+   table = soup.find('table', attrs={'class':'table table-condensed'})
+   
+   rows = table.find_all('tr')
+   for row in rows:
+       cols = row.find_all('td')
+       cols = [ele.text.strip() for ele in cols]
+       data.append([ele for ele in cols if ele])
+   
+   for entry in data:
+       if entry[0]=='new_tag':
+          newTag=entry[1]
+
+   #
+   # now count workers/cores that are active
+   #
+   data = []
+   table = soup.find('table', attrs={'class':'table table-striped table-condensed'})
+   
+   rows = table.find_all('tr')
+   for row in rows:
+       cols = row.find_all('td')
+       cols = [ele.text.strip() for ele in cols]
+       data.append([ele for ele in cols if ele])
+   
+   activeWorker=0
+   activeCore=0
+   for entry in data:
+       if len(entry)==10:
+          if entry[2]=='seconds ago':
+             activeWorker+=1
+             activeCore+=int(re.split('c',re.split('-',entry[1])[1])[0])
+ 
+   #
+   # analyse with sprt_elo
+   #  
+   mode=LogisticElo if False else BayesElo
+   s=sprt(alpha=alpha,beta=beta,elo0=elo0,elo1=elo1,mode=mode)
+   s.set_state(W,D,L)
+   p=1-level
+   a=s.analytics(p)
+
+   #
+   # get arrays ready for plot
+   #
+   DataX.append(W+L+D)
+   DataLOS.append(100*a['LOS'])
+   DataElo.append(a['elo'])
+   DataEloLowError.append(a['elo']-a['ci'][0])
+   DataEloHighError.append(-a['elo']+a['ci'][1])
+   DataLLR.append(a['LLR'])
+   DataWorkers.append(activeWorker)
+   DataCores.append(activeCore)
+
+   #
+   # Save for history
+   # 
+   restartfile=open(restartfileName,"w") 
+   json.dump([DataX, DataLOS, DataElo, DataEloLowError, DataEloHighError, DataLLR, DataWorkers, DataCores],restartfile,indent=4)
+   restartfile.close()
+
+   #
+   # Text report
+   #
+   print("")
+   print(sys.argv[1])
+   print(newTag)
+   print("")
+   print("Design parameters")
+   print("=================")
+   print("False positives             :  %4.1f%%" % (100*alpha,))
+   print("False negatives             :  %4.1f%%" % (100*beta,))
+   print("[Elo0,Elo1]                 :  [%.2f,%.2f] %s" % (elo0,elo1,"" if mode==LogisticElo else "(BayesElo)"))
+   print("Confidence level            :  %4.1f%%" % (100*(1-p),))
+   print("Estimates")
+   print("=========")
+   print("Elo                         :  %.2f"    % a['elo'])
+   print("Confidence interval         :  [%.2f,%.2f] (%4.1f%%)"  % (a['ci'][0],a['ci'][1],100*(1-p)))
+   print("Confidence of gain ('LOS')  :  %4.2f%%" % (100*a['LOS'],))
+   print("Context")
+   print("=======")
+   print("Games                       :  %d" % (a['games'],))
+   print("Draw ratio                  :  %4.1f%%"    % (100*a['draw_ratio'],))
+   print("DrawElo                     :  %.1f (BayesElo)"    % a['draw_elo'])
+   print("LLR [u,l]                   :  %.2f %s [%.2f,%.2f]"       % (a['LLR'], '(clamped)' if a['clamped'] else '',a['a'],a['b']))
+   print("[H0,H1] rejection           :  [%4.1f%%,%4.1f%%]" % (100*a['H0_reject'],100*a['H1_reject']))
+   print("[Elo0,Elo1]                 :  [%.2f,%.2f]"    % (a['elo0'],a['elo1']))
+
+   #
+   # Plotting
+   #
+   plt.ion()
+   plt.clf()
+
+   plt.subplots_adjust(left=0.10, bottom=0.10, right=0.90, top=0.90,
+                wspace=0.3, hspace=0.3)
+   plt.suptitle(newTag)
+
+   if (DataLLR[-1]<0):
+      color='#DD0000'
+   if (W>L):
+      color='#DDDD00'
+   if (DataLLR[-1]>=0):
+      color='#00DD00'
+
+
+   xDataRange=max(DataX)-min(DataX)
+   if (xDataRange<100):
+       xDataRange = 100
+   xmin=min(DataX) - xDataRange/10
+   xmax=max(DataX) + xDataRange/10
+
+   # Elo
+   plt.subplot(2,2,1)
+   plt.title('Elo')
+   plt.xlim(xmin,xmax)
+   ymin=DataElo[-1]-DataEloLowError[-1]*1.5
+   ymax=DataElo[-1]+DataEloHighError[-1]*1.5
+   plt.ylim(ymin,ymax)
+   plt.errorbar(DataX,DataElo,yerr=[DataEloLowError,DataEloHighError],color=color,errorevery=int((len(DataX)+19)/20))
+   
+   # LLR
+   plt.subplot(2,2,2)
+   plt.title('LLR')
+   plt.xlim(xmin,xmax)
+   yDataRange=max(DataLLR)-min(DataLLR)
+   if (yDataRange<0.1):
+       yDataRange=0.1
+   ymin=min(DataLLR) - yDataRange/10
+   ymax=max(DataLLR) + yDataRange/10
+   if (ymin<-2.94):
+       ymin=-2.94
+   if (ymax>2.94):
+       ymax=2.94
+   plt.ylim(ymin,ymax)
+   plt.plot(DataX,DataLLR,color=color)
+
+   # LOS
+   plt.subplot(2,2,3)
+   plt.title('LOS')
+   plt.xlim(xmin,xmax)
+   yDataRange=max(DataLOS)-min(DataLOS)
+   if (yDataRange<10):
+       yDataRange=10
+   ymin=min(DataLOS) - yDataRange/10
+   ymax=max(DataLOS) + yDataRange/10
+   if (ymin<0):
+       ymin=0
+   if (ymax>100):
+       ymax=100
+   plt.ylim(0,100)
+   plt.ylim(ymin,ymax)
+   plt.plot(DataX,DataLOS,color=color)
+   plt.xlabel('Games')
+
+   # workers
+   plt.subplot(2,2,4)
+   plt.title('Workers/Cores')
+   plt.xlim(xmin,xmax)
+   yDataRange=max(DataCores)
+   if (yDataRange<10):
+       yDataRange=10
+   ymin=0
+   ymax=max(DataCores) + yDataRange/10
+   plt.ylim(ymin,ymax)
+   plt.plot(DataX,DataCores,color=color)
+   plt.plot(DataX,DataWorkers,color=color)
+   plt.xlabel('Games')
+
+   #  
+   # Wait a bit not to overload the fishtest server
+   #
+   plt.pause(10)
+   #time.sleep(10)
+
