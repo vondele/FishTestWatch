@@ -117,7 +117,8 @@ while True:
        if len(entry)==10:
           if entry[2]=='seconds ago':
              activeWorker+=1
-             activeCore+=int(re.split('c',re.split('-',entry[1])[1])[0])
+             workerName=re.split('-',entry[1])  
+             activeCore+=int(re.split('c',workerName[len(workerName)-2])[0])
  
    #
    # analyse with sprt_elo
