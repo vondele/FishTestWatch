@@ -25,7 +25,10 @@ import math
 import time
 import sys
 import re
-import urllib
+try:
+   from urllib.request import urlopen
+except ImportError:
+   from urllib2 import urlopen
 import json
 from matplotlib import pyplot as plt
 from bs4 import BeautifulSoup
@@ -52,7 +55,13 @@ while True:
    #
    # fetch URL from argv and parse
    #
-   f = urllib.urlopen(sys.argv[1])
+   try:
+      f = urlopen(sys.argv[1])
+   except:
+      print("Unable to open URL, retrying later")
+      time.sleep(10)
+      continue
+
    soup = BeautifulSoup(f, 'html.parser')
 
 
@@ -60,10 +69,10 @@ while True:
    line = str(soup.find_all(class_="elo-results")[0])
    line = re.split(">",line)[1]
    line = re.split("<",line)[0]
-   line = filter(None,re.split("[a-zA-Z: ()\[\],\n]+",line))
+   line = list(filter(None,re.split("[a-zA-Z: ()\[\],\n]+",line)))
    
    if len(line)<9:
-      print "No Data yet!"
+      print("No Data yet!")
       time.sleep(10)
       continue
 
