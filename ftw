@@ -217,6 +217,7 @@ while True:
    ymin=DataElo[-1]-DataEloLowError[-1]*1.5
    ymax=DataElo[-1]+DataEloHighError[-1]*1.5
    plt.ylim(ymin,ymax)
+   plt.axhline(0, color='black')
    plt.errorbar(DataX,DataElo,yerr=[DataEloLowError,DataEloHighError],color=color,errorevery=int((len(DataX)+19)/20))
    
    # LLR
@@ -233,6 +234,7 @@ while True:
    if (ymax>2.94):
        ymax=2.94
    plt.ylim(ymin,ymax)
+   plt.axhline(0, color='black')
    plt.plot(DataX,DataLLR,color=color)
 
    # LOS
